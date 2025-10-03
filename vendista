@@ -1,0 +1,139 @@
+
+import serial
+import time
+
+class VENDISTA:
+    def __init__(self):
+        self.ser = serial.Serial('/dev/ttyUSB0', 115200)
+        self.lastByte = 0
+        self.waitingForSecondByte = False
+
+    def crc16(self, data):
+        xor_in = 0xFFFF  # initial value
+        xor_out = 0xFFFF  # final XOR value
+        poly = 0x8005  # generator polinom (normal form)
+
+        reg = xor_in
+        for octet in data:
+            # reflect in
+            for i in range(8):
+                topbit = reg & 0x8000
+                if octet & (0x80 >> i):
+                    topbit ^= 0x8000
+                reg <<= 1
+                if topbit:
+                    reg ^= poly
+            reg &= 0xFFFF
+            # reflect out
+        return reg ^ xor_out
+
+    # Создание тела оплаты: CMD (0x01) + сумма + валюта + время + slave
+    def make_pay_body(self, cost):
+        out = [0] * 12
+        out[0] = 0x01  # Команда ReadCard
+        kop = cost * 100
+        out[1] = (kop >> 0) & 0xFF
+        out[2] = (kop >> 8) & 0xFF
+        out[3] = (kop >> 16) & 0xFF
+        out[4] = (kop >> 24) & 0xFF
+        out[5] = 0x06  # Валюта: 0x4306 LE
+        out[6] = 0x43
+        out[7] = 0x00  # Время (пока по нулям)
+        out[8] = out[9] = out[10] = 0x00
+        out[11] = 0x01  # Slave
+        return out
+
+    # Создание тела изображения
+    def makeImgBody(self, number, out):
+        out[0] = 0x03  # Команда ShowPicture
+        out[1] = number & 0xFF
+        return out
+
+    def makeQRBody(self, cost):
+        out = [0] * 12
+        out[0] = 0x04  # Команда ShowQR
+        kop = cost * 100
+        out[1] = kop & 0xFF
+        out[2] = (kop >> 8) & 0xFF
+        out[3] = (kop >> 16) & 0xFF
+        out[4] = (kop >> 24) & 0xFF
+        out[5] = 0x06  # Валюта: 0x4306 LE
+        out[6] = 0x43
+        out[7] = 0x00  # Время (пока по нулям)
+        out[8] = 0x00
+        out[9] = 0x00
+        out[10] = 0x00
+        out[11] = 0x01  # Slave
+
+        return out
+
+    def reboot(self):
+        rbt = [0x01, 0x00, 0xE3, 0x02, 0x05]
+        self.ser.write(rbt)
+
+    def cancelReadCard(self):
+        cancel = [0x01, 0x00, 0xCE, 0x82, 0x08]
+        self.ser.write(cancel)
+
+    def fillScreen(self):
+        fill = [0x03, 0x00, 0x48, 0x71, 0x09, 0x00, 0x00]
+        self.ser.write(fill)
+
+    def print_hex_array(self, data):
+        hex_str = ' '.join(f'0x{byte:02X}' for byte in data)
+        print(hex_str)
+
+    def request_pay(self, amount):
+        
+        body = self.make_pay_body(amount)  
+        #body = self.makeQRBody(amount) 
+        
+        #print(body)
+        body_len = len(body)
+        crc = self.crc16(body)
+        packet = [0] * 16
+        packet[0] = body_len & 0xFF
+        packet[1] = (body_len >> 8) & 0xFF
+        packet[2] = crc & 0xFF
+        packet[3] = (crc >> 8) & 0xFF
+        packet[4:] = body[:]
+        
+        #packet_test = [0x0C, 0x00, 0xC9, 0x9A, 0x01, 0x70, 0x17, 0x00, 0x00, 0x06, 0x43, 0x00, 0x00, 0x00, 0x00, 0x01]
+        #print("Controll packet:", packet_test)
+        
+        #print("Sending  packet:", packet) # Заменить на реальную отправку по Serial1
+        self.ser.write(packet)
+
+        incoming_byte = self.ser.readline()
+        self.print_hex_array(incoming_byte)
+        for byte in incoming_byte:
+            print(byte)
+
+
+        # if not self.waitingForSecondByte:
+        #     # Ожидаем первый байт (0x13)
+        #     if incoming_byte == 0x13:
+        #         self.waitingForSecondByte = True
+        #         self.lastByte = incoming_byte
+        #     else:
+        #         print("Incorrect first byte")
+
+        # else:
+        #     # Ожидаем второй байт (0x02)
+        #     if incoming_byte == 0x02:
+        #         print("Successfully paid")
+        #         return True
+        #     else:
+        #         print("Incorrect second byte")
+        #     self.waitingForSecondByte = False
+        
+        # return False
+
+
+if __name__  == '__main__': 
+    pay = VENDISTA()
+
+    pay.request_pay(1)
+    #pay.cancelReadCard()
+    #pay.fillScreen()
+    #pay.reboot()
